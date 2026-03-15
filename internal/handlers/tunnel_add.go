@@ -44,6 +44,7 @@ func addTunnelInteractive(ctx *actions.Context, cfg *config.Config) error {
 		Options: []tui.MenuOption{
 			{Label: "DNSTT", Value: string(config.TransportDNSTT)},
 			{Label: "Slipstream", Value: string(config.TransportSlipstream)},
+			{Label: "MasterDNS", Value: string(config.TransportMasterDNS)},
 		},
 	})
 	if err != nil {
@@ -158,6 +159,29 @@ func addTunnelInteractive(ctx *actions.Context, cfg *config.Config) error {
 		}
 	}
 
+	// Get encryption method for MasterDNS
+	masterDNSEncryption := 1 // Default: XOR
+	if config.TransportType(transportType) == config.TransportMasterDNS {
+		encOpt, encErr := tui.RunMenu(tui.MenuConfig{
+			Title: "Encryption Method",
+			Options: []tui.MenuOption{
+				{Label: "XOR (fast, recommended)", Value: "1"},
+				{Label: "ChaCha20 (strong)", Value: "2"},
+				{Label: "AES-128-GCM", Value: "3"},
+				{Label: "AES-256-GCM (strongest)", Value: "5"},
+				{Label: "None (no encryption)", Value: "0"},
+			},
+		})
+		if encErr != nil {
+			return encErr
+		}
+		if encOpt == "" {
+			return nil
+		}
+		parsed, _ := strconv.Atoi(encOpt)
+		masterDNSEncryption = parsed
+	}
+
 	// Build tunnel config
 	tunnelCfg := &config.TunnelConfig{
 		Tag:       tag,
@@ -169,6 +193,9 @@ func addTunnelInteractive(ctx *actions.Context, cfg *config.Config) error {
 	// Transport-specific configuration
 	if tunnelCfg.Transport == config.TransportDNSTT {
 		tunnelCfg.DNSTT = &config.DNSTTConfig{MTU: mtu}
+	}
+	if tunnelCfg.Transport == config.TransportMasterDNS {
+		tunnelCfg.MasterDNS = &config.MasterDNSConfig{EncryptionMethod: masterDNSEncryption}
 	}
 
 	// Allocate port
@@ -193,8 +220,8 @@ func addTunnelNonInteractive(ctx *actions.Context, cfg *config.Config) error {
 	transportType := config.TransportType(transportStr)
 
 	// Validate transport type
-	if transportType != config.TransportSlipstream && transportType != config.TransportDNSTT {
-		return fmt.Errorf("invalid transport type: %s (must be slipstream or dnstt)", transportType)
+	if transportType != config.TransportSlipstream && transportType != config.TransportDNSTT && transportType != config.TransportMasterDNS {
+		return fmt.Errorf("invalid transport type: %s (must be slipstream, dnstt, or masterdns)", transportType)
 	}
 
 	// Validate backend exists and is compatible
@@ -208,6 +235,12 @@ func addTunnelNonInteractive(ctx *actions.Context, cfg *config.Config) error {
 		return actions.NewActionError(
 			"incompatible transport and backend",
 			"DNSTT transport does not support Shadowsocks backend",
+		)
+	}
+	if transportType == config.TransportMasterDNS && backend.Type == config.BackendShadowsocks {
+		return actions.NewActionError(
+			"incompatible transport and backend",
+			"MasterDNS transport does not support Shadowsocks backend",
 		)
 	}
 
@@ -240,6 +273,13 @@ func addTunnelNonInteractive(ctx *actions.Context, cfg *config.Config) error {
 			mtu = 1232
 		}
 		tunnelCfg.DNSTT = &config.DNSTTConfig{MTU: mtu}
+	}
+	if transportType == config.TransportMasterDNS {
+		encMethod := ctx.GetInt("encryption-method")
+		if encMethod == 0 {
+			encMethod = 1 // Default: XOR
+		}
+		tunnelCfg.MasterDNS = &config.MasterDNSConfig{EncryptionMethod: encMethod}
 	}
 
 	// Allocate port
@@ -366,6 +406,9 @@ func createTunnel(ctx *actions.Context, tunnelCfg *config.TunnelConfig, cfg *con
 		publicKey = keyInfo.PublicKey
 		tunnelCfg.DNSTT.PrivateKey = keyInfo.PrivateKeyPath
 		ctx.Output.Status("Curve25519 keys ready")
+	} else if tunnelCfg.Transport == config.TransportMasterDNS {
+		// MasterDNS generates its own encrypt_key.txt at runtime; no pre-generation needed
+		ctx.Output.Status("MasterDNS uses auto-generated encryption key (created on first start)")
 	}
 
 	// Step 4: Create systemd service
@@ -470,6 +513,9 @@ func buildBackendOptions(cfg *config.Config, transportType config.TransportType)
 		// Check compatibility
 		if transportType == config.TransportDNSTT && b.Type == config.BackendShadowsocks {
 			continue // DNSTT doesn't support shadowsocks
+		}
+		if transportType == config.TransportMasterDNS && b.Type == config.BackendShadowsocks {
+			continue // MasterDNS doesn't support shadowsocks
 		}
 
 		typeName := config.GetBackendTypeDisplayName(b.Type)

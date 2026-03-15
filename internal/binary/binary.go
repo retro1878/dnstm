@@ -3,6 +3,7 @@ package binary
 
 import (
 	"archive/tar"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,11 @@ import (
 	"github.com/ulikunitz/xz"
 )
 
+// newGzipReader creates a new gzip reader.
+func newGzipReader(r io.Reader) (*gzip.Reader, error) {
+	return gzip.NewReader(r)
+}
+
 // BinaryType identifies a binary.
 type BinaryType string
 
@@ -25,6 +31,7 @@ const (
 	BinarySSServer         BinaryType = "ssserver"
 	BinaryMicrosocks       BinaryType = "microsocks"
 	BinarySSHTunUser       BinaryType = "sshtun-user"
+	BinaryMasterDNSServer  BinaryType = "masterdns-server"
 
 	// Client binaries (used in testing)
 	BinaryDNSTTClient      BinaryType = "dnstt-client"
@@ -34,14 +41,15 @@ const (
 
 // BinaryDef defines how to obtain a binary.
 type BinaryDef struct {
-	Type          BinaryType
-	EnvVar        string              // Environment variable for custom path
-	URLPattern    string              // Download URL pattern with {version}, {os}, {arch} placeholders
-	PinnedVersion string              // Expected version for this dnstm release
-	Archive       bool                // If true, URL points to an archive
-	ArchiveDir    string              // Directory inside archive where binary is located
-	Platforms     map[string][]string // Supported os -> []arch
-	SkipUpdate    bool                // If true, skip in update process
+	Type              BinaryType
+	EnvVar            string              // Environment variable for custom path
+	URLPattern        string              // Download URL pattern with {version}, {os}, {arch} placeholders
+	PinnedVersion     string              // Expected version for this dnstm release
+	Archive           bool                // If true, URL points to an archive
+	ArchiveDir        string              // Directory inside archive where binary is located
+	ArchiveBinaryName string              // Filename to look for inside archive (supports same placeholders as URLPattern); defaults to binary type name
+	Platforms         map[string][]string // Supported os -> []arch
+	SkipUpdate        bool                // If true, skip in update process
 }
 
 // DefaultBinaries contains definitions for all supported binaries.
@@ -94,6 +102,18 @@ var DefaultBinaries = map[BinaryType]BinaryDef{
 		PinnedVersion: "v0.3.5",
 		Platforms: map[string][]string{
 			"linux": {"amd64", "arm64"},
+		},
+	},
+	BinaryMasterDNSServer: {
+		Type:              BinaryMasterDNSServer,
+		EnvVar:            "DNSTM_MASTERDNS_SERVER_PATH",
+		URLPattern:        "https://github.com/masterking32/MasterDnsVPN/releases/download/{version}/MasterDnsVPN_Server_{masterdnsosarch}.tar.gz",
+		PinnedVersion:     "v2026.03.14.195032-8972eb0",
+		Archive:           true,
+		ArchiveBinaryName: "MasterDnsVPN_Server_{masterdnsosarch}_{version}",
+		Platforms: map[string][]string{
+			"linux":  {"amd64", "arm64"},
+			"darwin": {"arm64"},
 		},
 	},
 
@@ -352,6 +372,10 @@ func (m *Manager) buildURLWithVersion(def BinaryDef, version string) string {
 	microsocksArch := m.getMicrosocksArch()
 	url = strings.ReplaceAll(url, "{microsocksarch}", microsocksArch)
 
+	// MasterDNS uses different OS/arch naming
+	masterDNSArch := m.getMasterDNSArch()
+	url = strings.ReplaceAll(url, "{masterdnsosarch}", masterDNSArch)
+
 	return url
 }
 
@@ -370,6 +394,22 @@ func (m *Manager) getShadowsocksArch() string {
 		return "x86_64-pc-windows-msvc"
 	default:
 		return fmt.Sprintf("%s-unknown-%s", m.arch, m.os)
+	}
+}
+
+// getMasterDNSArch returns the MasterDnsVPN OS+arch string used in filenames.
+func (m *Manager) getMasterDNSArch() string {
+	switch {
+	case m.os == "linux" && m.arch == "amd64":
+		return "Linux_AMD64"
+	case m.os == "linux" && m.arch == "arm64":
+		return "Linux_ARM64"
+	case m.os == "darwin" && m.arch == "arm64":
+		return "MacOS_ARM64"
+	case m.os == "windows" && m.arch == "amd64":
+		return "Windows_AMD64"
+	default:
+		return "Linux_AMD64"
 	}
 }
 
@@ -435,20 +475,42 @@ func (m *Manager) saveToFile(r io.Reader, path string) error {
 	return err
 }
 
-// extractFromArchive extracts a specific binary from a tar.xz archive.
+// extractFromArchive extracts a specific binary from a tar.xz or tar.gz archive.
 func (m *Manager) extractFromArchive(r io.Reader, def BinaryDef, destPath string) error {
-	// Decompress xz
-	xzReader, err := xz.NewReader(r)
-	if err != nil {
-		return fmt.Errorf("failed to create xz reader: %w", err)
+	// Determine archive type from URL pattern
+	urlPattern := def.URLPattern
+	var tarReader *tar.Reader
+
+	if strings.HasSuffix(urlPattern, ".tar.gz") || strings.HasSuffix(urlPattern, ".tgz") {
+		// Decompress gzip
+		gzReader, err := newGzipReader(r)
+		if err != nil {
+			return fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		defer gzReader.Close()
+		tarReader = tar.NewReader(gzReader)
+	} else {
+		// Default: decompress xz
+		xzReader, err := xz.NewReader(r)
+		if err != nil {
+			return fmt.Errorf("failed to create xz reader: %w", err)
+		}
+		tarReader = tar.NewReader(xzReader)
 	}
 
-	// Read tar
-	tarReader := tar.NewReader(xzReader)
-
-	binaryName := string(def.Type)
-	if m.os == "windows" {
-		binaryName += ".exe"
+	// Determine the binary name to look for inside the archive
+	var binaryName string
+	if def.ArchiveBinaryName != "" {
+		// Evaluate the ArchiveBinaryName template with the same substitutions as the URL
+		binaryName = m.buildURLWithVersion(BinaryDef{
+			URLPattern:    def.ArchiveBinaryName,
+			PinnedVersion: def.PinnedVersion,
+		}, def.PinnedVersion)
+	} else {
+		binaryName = string(def.Type)
+		if m.os == "windows" {
+			binaryName += ".exe"
+		}
 	}
 
 	for {

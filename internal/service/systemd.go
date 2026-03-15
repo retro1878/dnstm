@@ -9,14 +9,16 @@ import (
 
 // ServiceConfig contains configuration for a systemd service.
 type ServiceConfig struct {
-	Name             string   // Service name (e.g., "dnstt-server", "slipstream-server")
-	Description      string
-	User             string
-	Group            string
-	ExecStart        string
-	ReadOnlyPaths    []string // Paths that should be read-only
-	ReadWritePaths   []string // Paths that should be read-write
-	BindToPrivileged bool     // Whether service needs CAP_NET_BIND_SERVICE
+	Name                      string   // Service name (e.g., "dnstt-server", "slipstream-server")
+	Description               string
+	User                      string
+	Group                     string
+	ExecStart                 string
+	WorkingDirectory          string   // Working directory for the service process
+	ReadOnlyPaths             []string // Paths that should be read-only
+	ReadWritePaths            []string // Paths that should be read-write
+	BindToPrivileged          bool     // Whether service needs CAP_NET_BIND_SERVICE
+	SkipMemoryDenyWriteExecute bool    // Disable MemoryDenyWriteExecute (needed for PyInstaller binaries)
 }
 
 // RealSystemdManager implements SystemdManager using actual systemd commands.
@@ -129,6 +131,18 @@ func CreateGenericService(cfg *ServiceConfig) error {
 		capsSection = "AmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\n"
 	}
 
+	// Build optional WorkingDirectory line
+	var workDirLine string
+	if cfg.WorkingDirectory != "" {
+		workDirLine = fmt.Sprintf("WorkingDirectory=%s\n", cfg.WorkingDirectory)
+	}
+
+	// Build MemoryDenyWriteExecute line (disabled for PyInstaller/JIT binaries)
+	memDenyLine := "MemoryDenyWriteExecute=yes\n"
+	if cfg.SkipMemoryDenyWriteExecute {
+		memDenyLine = ""
+	}
+
 	serviceContent := fmt.Sprintf(`[Unit]
 Description=%s
 After=network-online.target
@@ -138,7 +152,7 @@ Wants=network-online.target
 Type=simple
 User=%s
 Group=%s
-ExecStart=%s
+%sExecStart=%s
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -154,12 +168,11 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
-MemoryDenyWriteExecute=yes
-LockPersonality=yes
+%sLockPersonality=yes
 
 [Install]
 WantedBy=multi-user.target
-`, cfg.Description, cfg.User, cfg.Group, cfg.ExecStart, pathsSection, capsSection)
+`, cfg.Description, cfg.User, cfg.Group, workDirLine, cfg.ExecStart, pathsSection, capsSection, memDenyLine)
 
 	if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
 		return fmt.Errorf("failed to write service file: %w", err)

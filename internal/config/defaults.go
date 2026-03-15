@@ -59,6 +59,16 @@ func (c *Config) ApplyDefaults() {
 				t.DNSTT.MTU = 1232
 			}
 		}
+
+		if t.Transport == TransportMasterDNS {
+			if t.MasterDNS == nil {
+				t.MasterDNS = &MasterDNSConfig{}
+			}
+			// Default encryption: 1=XOR (good performance + obfuscation)
+			if t.MasterDNS.EncryptionMethod == 0 {
+				t.MasterDNS.EncryptionMethod = 1
+			}
+		}
 	}
 
 	// Backend shadowsocks method default

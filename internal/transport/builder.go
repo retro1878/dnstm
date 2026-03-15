@@ -3,8 +3,10 @@ package transport
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/net2share/dnstm/internal/binary"
@@ -54,6 +56,12 @@ func SSHTunUserBinaryPath() string {
 	return path
 }
 
+// MasterDNSBinaryPath returns the path to masterdns-server.
+func MasterDNSBinaryPath() string {
+	path, _ := getBinManager().GetPath(binary.BinaryMasterDNSServer)
+	return path
+}
+
 // BuildOptions configures how the transport should bind.
 type BuildOptions struct {
 	BindHost string // "127.0.0.1" for multi mode, or external IP for single mode
@@ -70,24 +78,28 @@ func NewBuilder() *Builder {
 
 // TunnelBuildResult contains the result of building a tunnel service.
 type TunnelBuildResult struct {
-	ExecStart    string
-	ConfigDir    string
-	ReadPaths    []string
-	WritePaths   []string
-	BindToPort53 bool
+	ExecStart                  string
+	ConfigDir                  string
+	ReadPaths                  []string
+	WritePaths                 []string
+	BindToPort53               bool
+	WorkingDirectory           string // Optional working directory for the service process
+	SkipMemoryDenyWriteExecute bool   // Disable MemoryDenyWriteExecute (for PyInstaller binaries)
 }
 
 // CreateService creates a systemd service for the tunnel.
 func (r *TunnelBuildResult) CreateService(serviceName string) error {
 	cfg := &service.ServiceConfig{
-		Name:             serviceName,
-		Description:      fmt.Sprintf("dnstm tunnel: %s", serviceName),
-		User:             system.DnstmUser,
-		Group:            system.DnstmUser,
-		ExecStart:        r.ExecStart,
-		ReadOnlyPaths:    r.ReadPaths,
-		ReadWritePaths:   r.WritePaths,
-		BindToPrivileged: r.BindToPort53,
+		Name:                      serviceName,
+		Description:               fmt.Sprintf("dnstm tunnel: %s", serviceName),
+		User:                      system.DnstmUser,
+		Group:                     system.DnstmUser,
+		ExecStart:                 r.ExecStart,
+		WorkingDirectory:          r.WorkingDirectory,
+		ReadOnlyPaths:             r.ReadPaths,
+		ReadWritePaths:            r.WritePaths,
+		BindToPrivileged:          r.BindToPort53,
+		SkipMemoryDenyWriteExecute: r.SkipMemoryDenyWriteExecute,
 	}
 	return service.CreateGenericService(cfg)
 }
@@ -133,6 +145,8 @@ func (b *Builder) BuildTunnelService(tunnel *config.TunnelConfig, backend *confi
 		return b.buildSlipstreamTunnel(tunnel, backend, targetAddr, opts, result)
 	case config.TransportDNSTT:
 		return b.buildDNSTTTunnel(tunnel, backend, targetAddr, opts, result)
+	case config.TransportMasterDNS:
+		return b.buildMasterDNSTunnel(tunnel, backend, targetAddr, opts, result)
 	default:
 		return nil, fmt.Errorf("unknown transport type: %s", tunnel.Transport)
 	}
@@ -245,6 +259,139 @@ func (b *Builder) buildDNSTTTunnel(tunnel *config.TunnelConfig, backend *config.
 	}
 
 	result.ExecStart = fmt.Sprintf("%s %s", DNSTTBinaryPath(), strings.Join(args, " "))
+	return result, nil
+}
+
+// buildMasterDNSTunnel builds a MasterDnsVPN-based tunnel service.
+// MasterDNS is config-file based: it reads server_config.toml from its working directory.
+func (b *Builder) buildMasterDNSTunnel(tunnel *config.TunnelConfig, backend *config.BackendConfig, targetAddr string, opts *BuildOptions, result *TunnelBuildResult) (*TunnelBuildResult, error) {
+	if backend.Type == config.BackendShadowsocks {
+		return nil, fmt.Errorf("MasterDNS transport does not support Shadowsocks backend")
+	}
+
+	if tunnel.MasterDNS == nil {
+		return nil, fmt.Errorf("masterdns config not set for tunnel %s", tunnel.Tag)
+	}
+
+	// Determine protocol type and forwarding based on backend
+	protocolType := "SOCKS5"
+	useExternalSocks5 := false
+	socks5Auth := false
+	socks5User := ""
+	socks5Pass := ""
+	forwardIP := "127.0.0.1"
+	forwardPort := 1080
+
+	switch backend.Type {
+	case config.BackendSOCKS:
+		// Forward to the external SOCKS5 proxy (e.g., microsocks)
+		useExternalSocks5 = true
+		if host, portStr, err := net.SplitHostPort(targetAddr); err == nil {
+			forwardIP = host
+			if p, err := strconv.Atoi(portStr); err == nil {
+				forwardPort = p
+			}
+		}
+		if backend.HasSocksAuth() {
+			socks5Auth = true
+			socks5User = backend.Socks.User
+			socks5Pass = backend.Socks.Password
+		}
+	case config.BackendSSH, config.BackendCustom:
+		// TCP forwarding directly to the target
+		protocolType = "TCP"
+		if host, portStr, err := net.SplitHostPort(targetAddr); err == nil {
+			forwardIP = host
+			if p, err := strconv.Atoi(portStr); err == nil {
+				forwardPort = p
+			}
+		}
+	}
+
+	encryptionMethod := tunnel.MasterDNS.EncryptionMethod
+	if encryptionMethod == 0 {
+		encryptionMethod = 1 // Default: XOR
+	}
+
+	// Write server_config.toml into the tunnel config directory
+	configPath := filepath.Join(result.ConfigDir, "server_config.toml")
+	configContent := fmt.Sprintf(`# MasterDnsVPN server configuration - managed by dnstm
+# DO NOT EDIT MANUALLY
+
+UDP_HOST = "%s"
+UDP_PORT = %d
+
+DOMAIN = ["%s"]
+
+PROTOCOL_TYPE = "%s"
+
+USE_EXTERNAL_SOCKS5 = %v
+
+FORWARD_IP = "%s"
+FORWARD_PORT = %d
+
+SOCKS5_AUTH = %v
+SOCKS5_USER = "%s"
+SOCKS5_PASS = "%s"
+
+SOCKS_HANDSHAKE_TIMEOUT = 120.0
+
+DATA_ENCRYPTION_METHOD = %d
+
+SUPPORTED_UPLOAD_COMPRESSION_TYPES = [0, 1, 2, 3]
+SUPPORTED_DOWNLOAD_COMPRESSION_TYPES = [0, 1, 2, 3]
+
+ARQ_WINDOW_SIZE = 256
+ARQ_INITIAL_RTO = 0.5
+ARQ_MAX_RTO = 1.5
+
+ARQ_CONTROL_INITIAL_RTO = 0.5
+ARQ_CONTROL_MAX_RTO = 1.5
+ARQ_CONTROL_MAX_RETRIES = 180
+
+SESSION_TIMEOUT = 300
+SESSION_CLEANUP_INTERVAL = 30
+MAX_SESSIONS = 255
+
+MAX_CONCURRENT_REQUESTS = 500
+CPU_WORKER_THREADS = 0
+MAX_PACKETS_PER_BATCH = 1000
+SOCKET_BUFFER_SIZE = 8388608
+
+LOG_LEVEL = "INFO"
+
+CONFIG_VERSION = 3.0
+`,
+		opts.BindHost,
+		opts.BindPort,
+		tunnel.Domain,
+		protocolType,
+		useExternalSocks5,
+		forwardIP,
+		forwardPort,
+		socks5Auth,
+		socks5User,
+		socks5Pass,
+		encryptionMethod,
+	)
+
+	if err := os.WriteFile(configPath, []byte(configContent), 0640); err != nil {
+		return nil, fmt.Errorf("failed to write masterdns config: %w", err)
+	}
+	if err := system.ChownToDnstm(configPath); err != nil {
+		return nil, fmt.Errorf("failed to set config file ownership: %w", err)
+	}
+
+	// The binary reads server_config.toml from its working directory
+	result.ExecStart = MasterDNSBinaryPath()
+	result.ReadPaths = append(result.ReadPaths, configPath)
+	// encrypt_key.txt is generated at runtime in the config dir
+	result.WritePaths = append(result.WritePaths, result.ConfigDir)
+
+	// MasterDNS is a PyInstaller binary: needs WorkingDirectory and no MemoryDenyWriteExecute
+	result.WorkingDirectory = result.ConfigDir
+	result.SkipMemoryDenyWriteExecute = true
+
 	return result, nil
 }
 
