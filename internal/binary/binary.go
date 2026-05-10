@@ -25,8 +25,10 @@ const (
 	BinarySSHTunUser       BinaryType = "sshtun-user"
 	BinaryVayDNSServer     BinaryType = "vaydns-server"
 
+	BinaryMasterDNSVPNServer BinaryType = "masterdnsvpn-server"
+
 	// Client binaries (used in testing)
-	BinaryDNSTTClient      BinaryType = "dnstt-client"
+	BinaryDNSTTClient BinaryType = "dnstt-client"
 	BinarySlipstreamClient BinaryType = "slipstream-client"
 	BinarySSLocal          BinaryType = "sslocal"
 	BinaryVayDNSClient     BinaryType = "vaydns-client"
@@ -124,6 +126,16 @@ var DefaultBinaries = map[BinaryType]BinaryDef{
 			"linux":   {"amd64", "arm64"},
 			"darwin":  {"amd64", "arm64"},
 			"windows": {"amd64"},
+		},
+	},
+
+	BinaryMasterDNSVPNServer: {
+		Type:   BinaryMasterDNSVPNServer,
+		EnvVar: "DNSTM_MASTERDNSVPN_SERVER_PATH",
+		// No URLPattern: binary is distributed as a zip with a versioned filename.
+		// Installation is handled by a custom function in transport/install.go.
+		Platforms: map[string][]string{
+			"linux": {"amd64"},
 		},
 	},
 
@@ -371,6 +383,7 @@ func ServerBinaries() []BinaryDef {
 	serverTypes := []BinaryType{
 		BinaryDNSTTServer, BinarySlipstreamServer, BinarySSServer,
 		BinaryMicrosocks, BinarySSHTunUser, BinaryVayDNSServer,
+		BinaryMasterDNSVPNServer,
 	}
 	var defs []BinaryDef
 	for _, bt := range serverTypes {

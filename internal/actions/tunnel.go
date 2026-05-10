@@ -201,6 +201,129 @@ func init() {
 		},
 	})
 
+	// Register tunnel.convert action
+	Register(&Action{
+		ID:                ActionTunnelConvert,
+		Parent:            ActionTunnel,
+		Use:               "convert",
+		Short:             "Convert a tunnel to a different transport type",
+		Long:              "Convert an existing tunnel to a different transport type, keeping the same domain and port",
+		MenuLabel:         "Convert",
+		RequiresRoot:      true,
+		RequiresInstalled: true,
+		Args: &ArgsSpec{
+			Name:        "tag",
+			Description: "Tunnel tag",
+			Required:    true,
+			PickerFunc:  TunnelPicker,
+		},
+		Inputs: []InputField{
+			{
+				Name:        "to",
+				Label:       "Target transport (vaydns, dnstt, slipstream, masterdnsvpn)",
+				Type:        InputTypeSelect,
+				Required:    true,
+				Options:     TransportOptions(),
+				Description: "Transport type to convert to",
+				ShowIf:      func(ctx *Context) bool { return !ctx.IsInteractive },
+			},
+			{
+				Name:        "backend",
+				Label:       "Backend",
+				ShortFlag:   'b',
+				Type:        InputTypeSelect,
+				OptionsFunc: BackendOptions,
+				Description: "Backend for the new transport (not required for masterdnsvpn)",
+				ShowIf:      func(ctx *Context) bool { return !ctx.IsInteractive },
+			},
+			{
+				Name:        "masterdnsvpn-version",
+				Label:       "MasterDnsVPN version to install (e.g. v2026.04.07.233605-b5a4474; leave empty for latest)",
+				Type:        InputTypeText,
+				Description: "Pin the tunnel to a specific MasterDnsVPN release (only used when --to masterdnsvpn)",
+				ShowIf:      func(ctx *Context) bool { return !ctx.IsInteractive },
+			},
+		},
+	})
+
+	// Register tunnel.convert-all action
+	Register(&Action{
+		ID:                ActionTunnelConvertAll,
+		Parent:            ActionTunnel,
+		Use:               "convert-all",
+		Short:             "Convert all tunnels of one transport type to another",
+		Long:              "Convert every tunnel using a given transport to a different transport type in one pass",
+		MenuLabel:         "Convert All",
+		RequiresRoot:      true,
+		RequiresInstalled: true,
+		Inputs: []InputField{
+			{
+				Name:        "from",
+				Label:       "Source transport (vaydns, dnstt, slipstream, masterdnsvpn)",
+				Type:        InputTypeSelect,
+				Required:    true,
+				Options:     TransportOptions(),
+				Description: "Transport type to convert from",
+				ShowIf:      func(ctx *Context) bool { return !ctx.IsInteractive },
+			},
+			{
+				Name:        "to",
+				Label:       "Target transport (vaydns, dnstt, slipstream, masterdnsvpn)",
+				Type:        InputTypeSelect,
+				Required:    true,
+				Options:     TransportOptions(),
+				Description: "Transport type to convert to",
+				ShowIf:      func(ctx *Context) bool { return !ctx.IsInteractive },
+			},
+			{
+				Name:        "backend",
+				Label:       "Backend",
+				ShortFlag:   'b',
+				Type:        InputTypeSelect,
+				OptionsFunc: BackendOptions,
+				Description: "Backend for the new transport (not required for masterdnsvpn)",
+				ShowIf:      func(ctx *Context) bool { return !ctx.IsInteractive },
+			},
+			{
+				Name:        "masterdnsvpn-version",
+				Label:       "MasterDnsVPN version to install (e.g. v2026.04.07.233605-b5a4474; leave empty for latest)",
+				Type:        InputTypeText,
+				Description: "Pin all converted tunnels to a specific MasterDnsVPN release (only used when --to masterdnsvpn)",
+				ShowIf:      func(ctx *Context) bool { return !ctx.IsInteractive },
+			},
+		},
+	})
+
+	// Register tunnel.set-encryption action
+	Register(&Action{
+		ID:                ActionTunnelSetEncryption,
+		Parent:            ActionTunnel,
+		Use:               "set-encryption",
+		Short:             "Change encryption method for a MasterDnsVPN tunnel",
+		Long:              "Change the encryption method and regenerate the key for a MasterDnsVPN tunnel",
+		MenuLabel:         "Change Encryption",
+		RequiresRoot:      true,
+		RequiresInstalled: true,
+		Args: &ArgsSpec{
+			Name:        "tag",
+			Description: "Tunnel tag",
+			Required:    true,
+			PickerFunc:  TunnelPicker,
+		},
+	})
+
+	// Register tunnel.set-encryption-all action
+	Register(&Action{
+		ID:                ActionTunnelSetEncryptionAll,
+		Parent:            ActionTunnel,
+		Use:               "set-encryption-all",
+		Short:             "Change encryption method for all MasterDnsVPN tunnels",
+		Long:              "Change the encryption method and regenerate keys for all MasterDnsVPN tunnels in one pass",
+		MenuLabel:         "Set Encryption (All MasterDnsVPN)",
+		RequiresRoot:      true,
+		RequiresInstalled: true,
+	})
+
 	// Register tunnel.add action
 	Register(&Action{
 		ID:                ActionTunnelAdd,
@@ -222,11 +345,11 @@ func init() {
 			},
 			{
 				Name:        "transport",
-				Label:       "Transport (vaydns, dnstt, slipstream)",
+				Label:       "Transport (vaydns, dnstt, slipstream, masterdnsvpn)",
 				Type:        InputTypeSelect,
 				Required:    true,
 				Options:     TransportOptions(),
-				Description: "Transport protocol (vaydns, dnstt, slipstream)",
+				Description: "Transport protocol (vaydns, dnstt, slipstream, masterdnsvpn)",
 				ShowIf:      func(ctx *Context) bool { return !ctx.IsInteractive },
 			},
 			{
@@ -429,6 +552,11 @@ func TransportOptions() []SelectOption {
 			Value:       string(config.TransportDNSTT),
 			Description: "Classic DNS tunnel (dnstt-server)",
 		},
+		{
+			Label:       "MasterDnsVPN",
+			Value:       string(config.TransportMasterDNSVPN),
+			Description: "DNS tunnel with built-in SOCKS5 proxy (no backend required)",
+		},
 	}
 }
 
@@ -446,6 +574,9 @@ func BackendOptions(ctx *Context) []SelectOption {
 		// Check compatibility
 		if transport == config.TransportDNSTT && b.Type == config.BackendShadowsocks {
 			continue // DNSTT doesn't support shadowsocks
+		}
+		if transport == config.TransportMasterDNSVPN {
+			continue // MasterDnsVPN has no backend
 		}
 
 		typeName := config.GetBackendTypeDisplayName(b.Type)

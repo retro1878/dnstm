@@ -3,6 +3,8 @@ package handlers
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/net2share/dnstm/internal/actions"
@@ -31,6 +33,11 @@ func HandleTunnelShare(ctx *actions.Context) error {
 	tunnelCfg := cfg.GetTunnelByTag(tag)
 	if tunnelCfg == nil {
 		return actions.TunnelNotFoundError(tag)
+	}
+
+	// MasterDnsVPN uses its own client app, not a dnst:// URL.
+	if tunnelCfg.Transport == config.TransportMasterDNSVPN {
+		return handleMasterDNSVPNShare(ctx, tunnelCfg)
 	}
 
 	backend := cfg.GetBackendByTag(tunnelCfg.Backend)
@@ -123,6 +130,35 @@ func HandleTunnelShare(ctx *actions.Context) error {
 	}
 
 	ctx.Output.Println(url)
+	return nil
+}
+
+// handleMasterDNSVPNShare displays the client connection details for a MasterDnsVPN tunnel.
+// MasterDnsVPN uses its own client app rather than a dnst:// URL.
+func handleMasterDNSVPNShare(ctx *actions.Context, tunnelCfg *config.TunnelConfig) error {
+	keyFilePath := filepath.Join(config.TunnelsDir, tunnelCfg.Tag, "encrypt_key.txt")
+	keyData, err := os.ReadFile(keyFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to read encryption key: %w", err)
+	}
+	encryptionKey := strings.TrimSpace(string(keyData))
+
+	if ctx.IsInteractive {
+		fmt.Println()
+		fmt.Printf("Share: %s (MasterDnsVPN)\n\n", tunnelCfg.Tag)
+		fmt.Printf("Domain:         %s\n", tunnelCfg.Domain)
+		fmt.Printf("Encryption Key: %s\n", encryptionKey)
+		fmt.Println()
+		fmt.Println("Copy the Encryption Key into your client's config.")
+		fmt.Println("Set DATA_ENCRYPTION_METHOD = 1 on the client to match the server.")
+		fmt.Println()
+		fmt.Print("Press Enter to continue...")
+		fmt.Scanln()
+		return nil
+	}
+
+	ctx.Output.Println("Domain: " + tunnelCfg.Domain)
+	ctx.Output.Println("Encryption Key: " + encryptionKey)
 	return nil
 }
 

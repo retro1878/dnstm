@@ -20,8 +20,12 @@ const (
 	ActionTunnelStop        = "tunnel.stop"
 	ActionTunnelRestart     = "tunnel.restart"
 	ActionTunnelStatus      = "tunnel.status"
-	ActionTunnelLogs  = "tunnel.logs"
-	ActionTunnelShare = "tunnel.share"
+	ActionTunnelLogs    = "tunnel.logs"
+	ActionTunnelShare   = "tunnel.share"
+	ActionTunnelConvert          = "tunnel.convert"
+	ActionTunnelConvertAll       = "tunnel.convert-all"
+	ActionTunnelSetEncryption    = "tunnel.set-encryption"
+	ActionTunnelSetEncryptionAll = "tunnel.set-encryption-all"
 
 	// Router actions
 	ActionRouter        = "router"

@@ -4,9 +4,10 @@ package config
 type TransportType string
 
 const (
-	TransportSlipstream TransportType = "slipstream"
-	TransportDNSTT      TransportType = "dnstt"
-	TransportVayDNS     TransportType = "vaydns"
+	TransportSlipstream   TransportType = "slipstream"
+	TransportDNSTT        TransportType = "dnstt"
+	TransportVayDNS       TransportType = "vaydns"
+	TransportMasterDNSVPN TransportType = "masterdnsvpn"
 )
 
 // TunnelConfig configures a DNS tunnel.
@@ -17,9 +18,10 @@ type TunnelConfig struct {
 	Backend    string            `json:"backend"`
 	Domain     string            `json:"domain"`
 	Port       int               `json:"port,omitempty"`
-	Slipstream *SlipstreamConfig `json:"slipstream,omitempty"`
-	DNSTT      *DNSTTConfig      `json:"dnstt,omitempty"`
-	VayDNS     *VayDNSConfig     `json:"vaydns,omitempty"`
+	Slipstream   *SlipstreamConfig   `json:"slipstream,omitempty"`
+	DNSTT        *DNSTTConfig        `json:"dnstt,omitempty"`
+	VayDNS       *VayDNSConfig       `json:"vaydns,omitempty"`
+	MasterDNSVPN *MasterDNSVPNConfig `json:"masterdnsvpn,omitempty"`
 }
 
 // SlipstreamConfig holds Slipstream-specific configuration.
@@ -48,6 +50,15 @@ type VayDNSConfig struct {
 	QueueOverflow  string `json:"queue_overflow,omitempty"`
 	LogLevel       string `json:"log_level,omitempty"`
 	RecordType     string `json:"record_type,omitempty"`
+}
+
+// MasterDNSVPNConfig holds MasterDnsVPN-specific configuration.
+type MasterDNSVPNConfig struct {
+	ConfigFile string `json:"config_file,omitempty"`
+	// BinaryPath is the path to the tunnel-local masterdnsvpn-server binary.
+	// Each tunnel keeps its own copy so binaries can be versioned independently.
+	// When empty the shared binary from the bin dir is used (backwards compat).
+	BinaryPath string `json:"binary_path,omitempty"`
 }
 
 // ValidVayDNSRecordTypes returns the valid record types for VayDNS.
@@ -126,12 +137,18 @@ func (t *TunnelConfig) IsVayDNS() bool {
 	return t.Transport == TransportVayDNS
 }
 
+// IsMasterDNSVPN returns true if this is a MasterDnsVPN tunnel.
+func (t *TunnelConfig) IsMasterDNSVPN() bool {
+	return t.Transport == TransportMasterDNSVPN
+}
+
 // GetTransportTypes returns all available transport types.
 func GetTransportTypes() []TransportType {
 	return []TransportType{
 		TransportSlipstream,
 		TransportDNSTT,
 		TransportVayDNS,
+		TransportMasterDNSVPN,
 	}
 }
 
@@ -144,6 +161,8 @@ func GetTransportTypeDisplayName(t TransportType) string {
 		return "DNSTT"
 	case TransportVayDNS:
 		return "VayDNS"
+	case TransportMasterDNSVPN:
+		return "MasterDnsVPN"
 	default:
 		return string(t)
 	}

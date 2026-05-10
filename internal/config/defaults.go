@@ -59,6 +59,11 @@ func (c *Config) ApplyDefaults() {
 				t.DNSTT.MTU = 1232
 			}
 		}
+		if t.Transport == TransportMasterDNSVPN {
+			if t.MasterDNSVPN == nil {
+				t.MasterDNSVPN = &MasterDNSVPNConfig{}
+			}
+		}
 		if t.Transport == TransportVayDNS {
 			if t.VayDNS == nil {
 				t.VayDNS = &VayDNSConfig{}

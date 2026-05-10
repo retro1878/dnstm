@@ -2,6 +2,8 @@ module github.com/net2share/dnstm
 
 go 1.24.0
 
+toolchain go1.24.7
+
 require (
 	github.com/net2share/go-corelib v0.1.13
 	github.com/spf13/cobra v1.10.2

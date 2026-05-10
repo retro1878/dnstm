@@ -326,6 +326,12 @@ func runTunnelMenu() error {
 		}
 
 		options = append(options, tui.MenuOption{Separator: true})
+		if cfg != nil && len(cfg.Tunnels) > 0 {
+			options = append(options, tui.MenuOption{Label: "Convert All", Value: actions.ActionTunnelConvertAll})
+			if hasMasterDNSVPNTunnels(cfg) {
+				options = append(options, tui.MenuOption{Label: "Set Encryption (All MasterDnsVPN)", Value: actions.ActionTunnelSetEncryptionAll})
+			}
+		}
 		options = append(options, tui.MenuOption{Label: "Back", Value: "back"})
 
 		choice, err := tui.RunMenu(tui.MenuConfig{
@@ -339,6 +345,18 @@ func runTunnelMenu() error {
 		switch {
 		case choice == actions.ActionTunnelAdd:
 			if err := RunAction(actions.ActionTunnelAdd); err != nil {
+				if err != errCancelled {
+					_ = tui.ShowMessage(tui.AppMessage{Type: "error", Message: err.Error()})
+				}
+			}
+		case choice == actions.ActionTunnelConvertAll:
+			if err := RunAction(actions.ActionTunnelConvertAll); err != nil {
+				if err != errCancelled {
+					_ = tui.ShowMessage(tui.AppMessage{Type: "error", Message: err.Error()})
+				}
+			}
+		case choice == actions.ActionTunnelSetEncryptionAll:
+			if err := RunAction(actions.ActionTunnelSetEncryptionAll); err != nil {
 				if err != errCancelled {
 					_ = tui.ShowMessage(tui.AppMessage{Type: "error", Message: err.Error()})
 				}
@@ -438,7 +456,11 @@ func runTunnelManageMenu(tag string) error {
 			}
 		}
 
+		if tunnelCfg.Transport == config.TransportMasterDNSVPN {
+			options = append(options, tui.MenuOption{Label: "Change Encryption", Value: "set-encryption"})
+		}
 		options = append(options,
+			tui.MenuOption{Label: "Convert", Value: "convert"},
 			tui.MenuOption{Label: "Remove", Value: "remove"},
 			tui.MenuOption{Label: "Back", Value: "back"},
 		)
@@ -478,7 +500,8 @@ func runTunnelAction(actionID, tunnelTag string) error {
 	// Special handling for actions that need the tunnel tag
 	switch actionID {
 	case actions.ActionTunnelStatus, actions.ActionTunnelShare, actions.ActionTunnelLogs,
-		actions.ActionTunnelStart, actions.ActionTunnelStop, actions.ActionTunnelRestart, actions.ActionTunnelRemove:
+		actions.ActionTunnelStart, actions.ActionTunnelStop, actions.ActionTunnelRestart,
+		actions.ActionTunnelRemove, actions.ActionTunnelConvert, actions.ActionTunnelSetEncryption:
 		return runActionWithArgs(actionID, []string{tunnelTag})
 	default:
 		return RunAction(actionID)
@@ -740,4 +763,14 @@ func runBackendAction(actionID, backendTag string) error {
 	default:
 		return RunAction(actionID)
 	}
+}
+
+// hasMasterDNSVPNTunnels returns true if cfg contains at least one MasterDnsVPN tunnel.
+func hasMasterDNSVPNTunnels(cfg *config.Config) bool {
+	for _, t := range cfg.Tunnels {
+		if t.Transport == config.TransportMasterDNSVPN {
+			return true
+		}
+	}
+	return false
 }

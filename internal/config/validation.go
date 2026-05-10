@@ -109,11 +109,12 @@ func (c *Config) validateTunnels() error {
 			return fmt.Errorf("tunnel '%s': transport is required", t.Tag)
 		}
 
-		if t.Transport != TransportSlipstream && t.Transport != TransportDNSTT && t.Transport != TransportVayDNS {
+		if t.Transport != TransportSlipstream && t.Transport != TransportDNSTT && t.Transport != TransportVayDNS && t.Transport != TransportMasterDNSVPN {
 			return fmt.Errorf("tunnel '%s': unknown transport %s", t.Tag, t.Transport)
 		}
 
-		if t.Backend == "" {
+		// MasterDnsVPN operates its own SOCKS5 proxy and does not require a DNSTM backend.
+		if t.Backend == "" && t.Transport != TransportMasterDNSVPN {
 			return fmt.Errorf("tunnel '%s': backend is required", t.Tag)
 		}
 
@@ -121,15 +122,17 @@ func (c *Config) validateTunnels() error {
 			return fmt.Errorf("tunnel '%s': domain is required", t.Tag)
 		}
 
-		// Check backend reference
-		backend := c.GetBackendByTag(t.Backend)
-		if backend == nil {
-			return fmt.Errorf("tunnel '%s': backend '%s' not found", t.Tag, t.Backend)
-		}
+		// Check backend reference (MasterDnsVPN does not use a backend).
+		if t.Backend != "" {
+			backend := c.GetBackendByTag(t.Backend)
+			if backend == nil {
+				return fmt.Errorf("tunnel '%s': backend '%s' not found", t.Tag, t.Backend)
+			}
 
-		// Check transport-backend compatibility
-		if err := validateTransportBackendCompatibility(t.Transport, backend.Type); err != nil {
-			return fmt.Errorf("tunnel '%s': %w", t.Tag, err)
+			// Check transport-backend compatibility
+			if err := validateTransportBackendCompatibility(t.Transport, backend.Type); err != nil {
+				return fmt.Errorf("tunnel '%s': %w", t.Tag, err)
+			}
 		}
 
 		// Check port uniqueness (if port is set)

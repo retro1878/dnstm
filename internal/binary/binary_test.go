@@ -98,29 +98,37 @@ func TestArchMappings_Microsocks(t *testing.T) {
 
 func TestServerBinaries(t *testing.T) {
 	defs := ServerBinaries()
-	if len(defs) != 6 {
-		t.Errorf("ServerBinaries() returned %d, want 6", len(defs))
+	if len(defs) != 7 {
+		t.Errorf("ServerBinaries() returned %d, want 7", len(defs))
 	}
 
-	// Check VayDNS is included
-	found := false
-	for _, def := range defs {
-		if def.Type == BinaryVayDNSServer {
-			found = true
-			break
+	required := []BinaryType{BinaryVayDNSServer, BinaryMasterDNSVPNServer}
+	for _, want := range required {
+		found := false
+		for _, def := range defs {
+			if def.Type == want {
+				found = true
+				break
+			}
 		}
-	}
-	if !found {
-		t.Error("ServerBinaries() should include VayDNS")
+		if !found {
+			t.Errorf("ServerBinaries() should include %s", want)
+		}
 	}
 }
 
 func TestChecksumURLs(t *testing.T) {
-	// Verify all server binaries except sshtun-user have checksum URLs
+	// Binaries that intentionally have no ChecksumURL:
+	// - sshtun-user: upstream does not publish checksums
+	// - masterdnsvpn-server: uses a custom install path (zip download via transport/install.go)
+	noChecksum := map[BinaryType]bool{
+		BinarySSHTunUser:         true,
+		BinaryMasterDNSVPNServer: true,
+	}
 	for _, def := range ServerBinaries() {
-		if def.Type == BinarySSHTunUser {
+		if noChecksum[def.Type] {
 			if def.ChecksumURL != "" {
-				t.Errorf("SSHTunUser should have no ChecksumURL, got %s", def.ChecksumURL)
+				t.Errorf("%s should have no ChecksumURL, got %s", def.Type, def.ChecksumURL)
 			}
 			continue
 		}
