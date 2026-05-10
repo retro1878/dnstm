@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/net2share/dnstm/internal/actions"
@@ -46,6 +47,7 @@ func addTunnelInteractive(ctx *actions.Context, cfg *config.Config) error {
 			{Label: "VayDNS", Value: string(config.TransportVayDNS)},
 			{Label: "DNSTT", Value: string(config.TransportDNSTT)},
 			{Label: "Slipstream", Value: string(config.TransportSlipstream)},
+			{Label: "MasterDnsVPN", Value: string(config.TransportMasterDNSVPN)},
 		},
 	})
 	if err != nil {
@@ -55,30 +57,32 @@ func addTunnelInteractive(ctx *actions.Context, cfg *config.Config) error {
 		return nil
 	}
 
-	// Select backend
-	backendOptions := buildBackendOptions(cfg, config.TransportType(transportType))
-	if len(backendOptions) == 0 {
-		return actions.NewActionError(
-			"no compatible backends available",
-			"Add a backend first with 'dnstm backend add'",
-		)
-	}
+	// MasterDnsVPN manages its own SOCKS5 proxy; no DNSTM backend is required.
+	var backendTag string
+	if config.TransportType(transportType) != config.TransportMasterDNSVPN {
+		backendOptions := buildBackendOptions(cfg, config.TransportType(transportType))
+		if len(backendOptions) == 0 {
+			return actions.NewActionError(
+				"no compatible backends available",
+				"Add a backend first with 'dnstm backend add'",
+			)
+		}
 
-	backendTag, err := tui.RunMenu(tui.MenuConfig{
-		Title:   "Backend",
-		Options: backendOptions,
-	})
-	if err != nil {
-		return err
-	}
-	if backendTag == "" {
-		return nil
-	}
+		backendTag, err = tui.RunMenu(tui.MenuConfig{
+			Title:   "Backend",
+			Options: backendOptions,
+		})
+		if err != nil {
+			return err
+		}
+		if backendTag == "" {
+			return nil
+		}
 
-	// Validate backend exists
-	backend := cfg.GetBackendByTag(backendTag)
-	if backend == nil {
-		return actions.BackendNotFoundError(backendTag)
+		// Validate backend exists
+		if cfg.GetBackendByTag(backendTag) == nil {
+			return actions.BackendNotFoundError(backendTag)
+		}
 	}
 
 	// Get or generate tag
@@ -125,6 +129,7 @@ func addTunnelInteractive(ctx *actions.Context, cfg *config.Config) error {
 		if !confirmed {
 			return nil
 		}
+		domain = strings.TrimSpace(domain)
 		if domain == "" {
 			ctx.Output.Error("Domain is required")
 			continue
@@ -132,7 +137,7 @@ func addTunnelInteractive(ctx *actions.Context, cfg *config.Config) error {
 		break
 	}
 
-	// Get MTU for DNSTT/VayDNS
+	// Get MTU for DNSTT/VayDNS (not needed for MasterDnsVPN)
 	mtu := 1232
 	if config.TransportType(transportType) == config.TransportDNSTT || config.TransportType(transportType) == config.TransportVayDNS {
 		for {
@@ -335,6 +340,7 @@ func addTunnelInteractive(ctx *actions.Context, cfg *config.Config) error {
 			RecordType:   vaydnsRecordType,
 		}
 	}
+	// MasterDnsVPN config is populated later during createTunnel (after key generation).
 
 	// Allocate port
 	port := cfg.AllocateNextPort()
@@ -351,29 +357,36 @@ func addTunnelNonInteractive(ctx *actions.Context, cfg *config.Config) error {
 	port := ctx.GetInt("port")
 	mtu := ctx.GetInt("mtu")
 
-	if transportStr == "" || backendTag == "" || domain == "" {
-		return fmt.Errorf("--transport, --backend, and --domain flags are required\n\nUsage: dnstm tunnel add --transport TYPE -b BACKEND -d DOMAIN [-t TAG]")
-	}
-
 	transportType := config.TransportType(transportStr)
 
 	// Validate transport type
-	if transportType != config.TransportSlipstream && transportType != config.TransportDNSTT && transportType != config.TransportVayDNS {
-		return fmt.Errorf("invalid transport type: %s (must be slipstream, dnstt, or vaydns)", transportType)
+	if transportType != config.TransportSlipstream && transportType != config.TransportDNSTT && transportType != config.TransportVayDNS && transportType != config.TransportMasterDNSVPN {
+		return fmt.Errorf("invalid transport type: %s (must be slipstream, dnstt, vaydns, or masterdnsvpn)", transportType)
 	}
 
-	// Validate backend exists and is compatible
-	backend := cfg.GetBackendByTag(backendTag)
-	if backend == nil {
-		return actions.BackendNotFoundError(backendTag)
-	}
+	// MasterDnsVPN does not use a DNSTM backend.
+	if transportType == config.TransportMasterDNSVPN {
+		if domain == "" || transportStr == "" {
+			return fmt.Errorf("--transport and --domain flags are required\n\nUsage: dnstm tunnel add --transport masterdnsvpn -d DOMAIN [-t TAG]")
+		}
+	} else {
+		if transportStr == "" || backendTag == "" || domain == "" {
+			return fmt.Errorf("--transport, --backend, and --domain flags are required\n\nUsage: dnstm tunnel add --transport TYPE -b BACKEND -d DOMAIN [-t TAG]")
+		}
 
-	// Check transport-backend compatibility
-	if (transportType == config.TransportDNSTT || transportType == config.TransportVayDNS) && backend.Type == config.BackendShadowsocks {
-		return actions.NewActionError(
-			"incompatible transport and backend",
-			fmt.Sprintf("%s transport does not support Shadowsocks backend", config.GetTransportTypeDisplayName(transportType)),
-		)
+		// Validate backend exists and is compatible
+		backend := cfg.GetBackendByTag(backendTag)
+		if backend == nil {
+			return actions.BackendNotFoundError(backendTag)
+		}
+
+		// Check transport-backend compatibility
+		if (transportType == config.TransportDNSTT || transportType == config.TransportVayDNS) && backend.Type == config.BackendShadowsocks {
+			return actions.NewActionError(
+				"incompatible transport and backend",
+				fmt.Sprintf("%s transport does not support Shadowsocks backend", config.GetTransportTypeDisplayName(transportType)),
+			)
+		}
 	}
 
 	// Get tag from --tag/-t flag, or auto-generate
@@ -452,6 +465,8 @@ func addTunnelNonInteractive(ctx *actions.Context, cfg *config.Config) error {
 		}
 		tunnelCfg.VayDNS = v
 	}
+
+	// MasterDnsVPN config is populated later during createTunnel (after key generation).
 
 	// Allocate port
 	if port == 0 {
@@ -575,6 +590,7 @@ func createTunnel(ctx *actions.Context, tunnelCfg *config.TunnelConfig, cfg *con
 	ctx.Output.Step(currentStep, totalSteps, "Generating cryptographic material...")
 	var fingerprint string
 	var publicKey string
+	var masterDNSVPNKey string
 	if tunnelCfg.Transport == config.TransportSlipstream {
 		certInfo, err := certs.GetOrCreateInDir(tunnelDir, tunnelCfg.Domain)
 		if err != nil {
@@ -602,6 +618,23 @@ func createTunnel(ctx *actions.Context, tunnelCfg *config.TunnelConfig, cfg *con
 		publicKey = keyInfo.PublicKey
 		tunnelCfg.VayDNS.PrivateKey = keyInfo.PrivateKeyPath
 		ctx.Output.Status("Curve25519 keys ready")
+	} else if tunnelCfg.Transport == config.TransportMasterDNSVPN {
+		// Determine initial bind options for server_config.toml.
+		// In single mode with no existing tunnels this will bind to port 53; otherwise
+		// the tunnel's allocated port is used for multi-mode routing.
+		bindHost := "0.0.0.0"
+		bindPort := 53
+		if cfg.IsMultiMode() || len(cfg.Tunnels) > 0 {
+			bindHost = "127.0.0.1"
+			bindPort = tunnelCfg.Port
+		}
+		encKey, cfgPath, binPath, setupErr := transport.SetupMasterDNSVPN(tunnelDir, tunnelCfg.Domain, bindHost, bindPort)
+		if setupErr != nil {
+			return fmt.Errorf("failed to setup masterdnsvpn: %w", setupErr)
+		}
+		masterDNSVPNKey = encKey
+		tunnelCfg.MasterDNSVPN = &config.MasterDNSVPNConfig{ConfigFile: cfgPath, BinaryPath: binPath}
+		ctx.Output.Status("Encryption key generated")
 	}
 
 	// Step 4: Create systemd service
@@ -619,9 +652,9 @@ func createTunnel(ctx *actions.Context, tunnelCfg *config.TunnelConfig, cfg *con
 		}
 	}
 
-	// Get backend for service creation
+	// Get backend for service creation (MasterDnsVPN has no backend).
 	backend := cfg.GetBackendByTag(tunnelCfg.Backend)
-	if backend == nil {
+	if backend == nil && tunnelCfg.Transport != config.TransportMasterDNSVPN {
 		return actions.BackendNotFoundError(tunnelCfg.Backend)
 	}
 
@@ -688,6 +721,15 @@ func createTunnel(ctx *actions.Context, tunnelCfg *config.TunnelConfig, cfg *con
 		ctx.Output.Info("Public Key:")
 		ctx.Output.Println(publicKey)
 	}
+	if masterDNSVPNKey != "" {
+		ctx.Output.Println()
+		ctx.Output.Info("Encryption Key (copy to client config):")
+		ctx.Output.Println(masterDNSVPNKey)
+		if tunnelCfg.MasterDNSVPN != nil {
+			ctx.Output.Println()
+			ctx.Output.Info("Server config: " + tunnelCfg.MasterDNSVPN.ConfigFile)
+		}
+	}
 
 	if tunnelCfg.Transport == config.TransportVayDNS && tunnelCfg.VayDNS != nil {
 		v := tunnelCfg.VayDNS
@@ -722,6 +764,10 @@ func buildBackendOptions(cfg *config.Config, transportType config.TransportType)
 	for _, b := range cfg.Backends {
 		// Check compatibility: DNSTT and VayDNS don't support shadowsocks
 		if (transportType == config.TransportDNSTT || transportType == config.TransportVayDNS) && b.Type == config.BackendShadowsocks {
+			continue
+		}
+		// MasterDnsVPN does not use a backend; this function should not be called for it.
+		if transportType == config.TransportMasterDNSVPN {
 			continue
 		}
 

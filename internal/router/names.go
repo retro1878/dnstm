@@ -80,6 +80,7 @@ func ValidateTag(tag string) error {
 
 // NormalizeTag normalizes a tag to lowercase and replaces underscores with hyphens.
 func NormalizeTag(tag string) string {
+	tag = strings.TrimSpace(tag)
 	tag = strings.ToLower(tag)
 	tag = strings.ReplaceAll(tag, "_", "-")
 	tag = strings.ReplaceAll(tag, " ", "-")

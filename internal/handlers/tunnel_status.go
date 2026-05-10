@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/net2share/dnstm/internal/actions"
 	"github.com/net2share/dnstm/internal/certs"
@@ -43,12 +45,22 @@ func HandleTunnelStatus(ctx *actions.Context) error {
 	mainSection := actions.InfoSection{
 		Rows: []actions.InfoRow{
 			{Key: "Transport", Value: config.GetTransportTypeDisplayName(tunnelCfg.Transport)},
-			{Key: "Backend", Value: tunnelCfg.Backend},
 			{Key: "Domain", Value: tunnelCfg.Domain},
 			{Key: "Port", Value: fmt.Sprintf("%d", tunnelCfg.Port)},
 			{Key: "Service", Value: tunnel.ServiceName},
 			{Key: "Status", Value: tunnel.StatusString()},
 		},
+	}
+	// Only show Backend row when a backend is actually configured (MasterDnsVPN has none).
+	if tunnelCfg.Backend != "" {
+		mainSection.Rows = []actions.InfoRow{
+			{Key: "Transport", Value: config.GetTransportTypeDisplayName(tunnelCfg.Transport)},
+			{Key: "Backend", Value: tunnelCfg.Backend},
+			{Key: "Domain", Value: tunnelCfg.Domain},
+			{Key: "Port", Value: fmt.Sprintf("%d", tunnelCfg.Port)},
+			{Key: "Service", Value: tunnel.ServiceName},
+			{Key: "Status", Value: tunnel.StatusString()},
+		}
 	}
 	if tunnelCfg.Transport == config.TransportDNSTT && tunnelCfg.DNSTT != nil {
 		mainSection.Rows = append(mainSection.Rows, actions.InfoRow{
@@ -103,6 +115,14 @@ func HandleTunnelStatus(ctx *actions.Context) error {
 				},
 			}
 			infoCfg.Sections = append(infoCfg.Sections, keySection)
+		}
+	} else if tunnelCfg.Transport == config.TransportMasterDNSVPN {
+		keyFilePath := filepath.Join(tunnelDir, "encrypt_key.txt")
+		if keyData, err := os.ReadFile(keyFilePath); err == nil {
+			infoCfg.Sections = append(infoCfg.Sections, actions.InfoSection{
+				Title: "Encryption Key (copy to client config)",
+				Rows:  []actions.InfoRow{{Value: strings.TrimSpace(string(keyData))}},
+			})
 		}
 	}
 
@@ -164,6 +184,13 @@ func HandleTunnelStatus(ctx *actions.Context) error {
 		if err == nil {
 			ctx.Output.Println("Public Key:")
 			ctx.Output.Println(pubKey)
+			ctx.Output.Println()
+		}
+	} else if tunnelCfg.Transport == config.TransportMasterDNSVPN {
+		keyFilePath := filepath.Join(tunnelDir, "encrypt_key.txt")
+		if keyData, err := os.ReadFile(keyFilePath); err == nil {
+			ctx.Output.Println("Encryption Key (copy to client config):")
+			ctx.Output.Println(strings.TrimSpace(string(keyData)))
 			ctx.Output.Println()
 		}
 	}

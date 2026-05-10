@@ -42,6 +42,13 @@ func init() {
 				// user will be prompted to switch to multi when adding second tunnel
 				ShowIf: func(ctx *Context) bool { return !ctx.IsInteractive },
 			},
+			{
+				Name:  "masterdnsvpn-version",
+				Label: "MasterDnsVPN version to install (e.g. v2026.04.07.233605-b5a4474; leave empty for latest; 'skip' to skip)",
+				Type:  InputTypeText,
+				// Interactive callers get a version picker menu; only expose as a flag for CLI.
+				ShowIf: func(ctx *Context) bool { return !ctx.IsInteractive },
+			},
 		},
 	})
 

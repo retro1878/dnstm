@@ -249,7 +249,8 @@ func (r *Router) switchToMultiMode() error {
 	sg := NewServiceGenerator()
 	for _, tunnelCfg := range r.config.Tunnels {
 		backend := r.config.GetBackendByTag(tunnelCfg.Backend)
-		if backend == nil {
+		// MasterDNSVPN tunnels have no backend — pass nil, BuildTunnelService handles it.
+		if backend == nil && tunnelCfg.Transport != "masterdnsvpn" {
 			continue
 		}
 		multiOpts, err := sg.GetBindOptions(&tunnelCfg, ServiceModeMulti)
@@ -281,7 +282,10 @@ func (r *Router) switchToMultiMode() error {
 		}
 	}
 
-	// 10. Start DNS router AFTER tunnels are ready
+	// 10. Start and enable DNS router AFTER tunnels are ready
+	if err := r.dnsrouter.Enable(); err != nil {
+		return r.rollback(snapshot, fmt.Sprintf("failed to enable DNS router: %v", err))
+	}
 	if err := r.dnsrouter.Start(); err != nil {
 		return r.rollback(snapshot, fmt.Sprintf("failed to start DNS router: %v", err))
 	}
