@@ -244,13 +244,56 @@ VayDNS with dnstt-compatible wire format:
 
 **Note:** VayDNS does not support the `shadowsocks` backend type.
 
+### MasterDnsVPN
+
+Self-contained VPN provider with built-in SOCKS5 proxy and configurable encryption. Does not require a DNSTM backend.
+
+```json
+{
+  "tag": "vpn1",
+  "transport": "masterdnsvpn",
+  "domain": "t.example.com",
+  "port": 5316,
+  "masterdnsvpn": {
+    "config_file": "/etc/dnstm/tunnels/vpn1/server_config.toml",
+    "binary_path": "/etc/dnstm/tunnels/vpn1/masterdnsvpn-server"
+  }
+}
+```
+
+**MasterDnsVPN configuration fields:**
+
+| Field         | Type   | Default              | Description                                      |
+| ------------- | ------ | -------------------- | ------------------------------------------------ |
+| `config_file` | string | (auto-set on add)    | Path to `server_config.toml`                     |
+| `binary_path` | string | (auto-set on add)    | Path to per-tunnel `masterdnsvpn-server` binary  |
+
+The `config_file` and `binary_path` fields are set automatically when using `tunnel add` or `config load`. You do not need to set them manually.
+
+Key fields inside `server_config.toml` (managed by dnstm):
+
+| Field                    | Description                                           |
+| ------------------------ | ----------------------------------------------------- |
+| `DOMAIN`                 | Tunnel domain                                         |
+| `UDP_HOST`               | Bind host (`0.0.0.0` in single mode, `127.0.0.1` in multi) |
+| `UDP_PORT`               | Bind port (53 in single mode, auto-allocated in multi) |
+| `DATA_ENCRYPTION_METHOD` | Encryption method (0=None, 1=XOR, 2=ChaCha20, 3–5=AES) |
+| `ENCRYPTION_KEY_FILE`    | Path to encryption key file                           |
+| `DNS_UPSTREAM_SERVERS`   | Upstream resolvers (default: Cloudflare + Quad One)   |
+| `PROTOCOL_TYPE`          | Always `SOCKS5`                                       |
+
+**Note:** MasterDnsVPN does not use a DNSTM backend. The `backend` field must be omitted or left empty.
+
 ## Transport-Backend Compatibility
 
-| Transport  | socks | ssh | shadowsocks | custom |
-| ---------- | ----- | --- | ----------- | ------ |
-| slipstream | ✓     | ✓   | ✓           | ✓      |
-| dnstt      | ✓     | ✓   | ✗           | ✓      |
-| vaydns     | ✓     | ✓   | ✗           | ✓      |
+| Transport     | socks | ssh | shadowsocks | custom |
+| ------------- | ----- | --- | ----------- | ------ |
+| slipstream    | ✓     | ✓   | ✓           | ✓      |
+| dnstt         | ✓     | ✓   | ✗           | ✓      |
+| vaydns        | ✓     | ✓   | ✗           | ✓      |
+| masterdnsvpn  | —     | —   | —           | —      |
+
+MasterDnsVPN operates its own SOCKS5 proxy and does not use any backend.
 
 ## Route Configuration
 
@@ -274,14 +317,18 @@ VayDNS with dnstt-compatible wire format:
 
 ```
 /etc/dnstm/
-├── config.json           # Main configuration (JSON)
-└── tunnels/              # Per-tunnel directories
+├── config.json                  # Main configuration (JSON)
+├── .masterdnsvpn-version        # Installed MasterDnsVPN release tag (shared)
+└── tunnels/                     # Per-tunnel directories
     └── <tag>/
-        ├── cert.pem      # TLS certificate (Slipstream)
-        ├── key.pem       # TLS private key (Slipstream)
-        ├── server.key    # Curve25519 private key (DNSTT, VayDNS)
-        ├── server.pub    # Curve25519 public key (DNSTT, VayDNS)
-        └── config.json   # Shadowsocks config for SIP003
+        ├── cert.pem             # TLS certificate (Slipstream)
+        ├── key.pem              # TLS private key (Slipstream)
+        ├── server.key           # Curve25519 private key (DNSTT, VayDNS)
+        ├── server.pub           # Curve25519 public key (DNSTT, VayDNS)
+        ├── config.json          # Shadowsocks config for SIP003
+        ├── server_config.toml   # MasterDnsVPN server config
+        ├── encrypt_key.txt      # MasterDnsVPN encryption key
+        └── masterdnsvpn-server  # Per-tunnel MasterDnsVPN binary
 ```
 
 ## Certificates (Slipstream)

@@ -44,12 +44,15 @@ dnstm install                              # Interactive install with confirmati
 dnstm install --force                      # Install without confirmation prompts
 dnstm install --mode single                # Explicitly set single-tunnel mode
 dnstm install --mode multi                 # Install with multi-tunnel mode
+dnstm install --masterdnsvpn-version v2026.04.07.233605-b5a4474  # Pin MasterDnsVPN version
+dnstm install --masterdnsvpn-version skip  # Skip MasterDnsVPN installation
 ```
 
-| Flag            | Description                                   |
-| --------------- | --------------------------------------------- |
-| `--force`, `-f` | Skip confirmation prompts                     |
-| `--mode`, `-m`  | Operating mode: `single` (default) or `multi` |
+| Flag                       | Description                                                      |
+| -------------------------- | ---------------------------------------------------------------- |
+| `--force`, `-f`            | Skip confirmation prompts                                        |
+| `--mode`, `-m`             | Operating mode: `single` (default) or `multi`                    |
+| `--masterdnsvpn-version`   | MasterDnsVPN release tag to install (`skip` to omit entirely)    |
 
 This command:
 
@@ -100,13 +103,18 @@ dnstm tunnel add -t my-tunnel \
   --transport slipstream \
   --backend ss-primary \
   --domain t.example.com
+
+# MasterDnsVPN (no backend required)
+dnstm tunnel add -t vpn1 \
+  --transport masterdnsvpn \
+  --domain t.example.com
 ```
 
 | Flag                | Description                                                        |
 | ------------------- | ------------------------------------------------------------------ |
 | `--tag`, `-t`       | Tunnel tag (auto-generated if omitted)                             |
-| `--transport`       | Transport type: `slipstream`, `dnstt`, or `vaydns`                 |
-| `--backend`, `-b`   | Backend tag to forward traffic to                                  |
+| `--transport`       | Transport type: `slipstream`, `dnstt`, `vaydns`, or `masterdnsvpn` |
+| `--backend`, `-b`   | Backend tag to forward traffic to (not used by MasterDnsVPN)       |
 | `--domain`, `-d`    | Domain name                                                        |
 | `--port`, `-p`      | Port number (auto-allocated if not specified)                      |
 | `--mtu`             | MTU for DNSTT/VayDNS (default: 1232)                               |
@@ -137,6 +145,9 @@ dnstm tunnel share -t dnstt-ssh --user tunnel-user --key /root/.ssh/client_key
 
 # Skip embedding certificate (Slipstream only)
 dnstm tunnel share -t slip-socks --no-cert
+
+# Share a MasterDnsVPN tunnel (outputs domain + encryption key, not a dnst:// URL)
+dnstm tunnel share -t vpn1
 ```
 
 | Flag          | Description                                       |
@@ -148,6 +159,53 @@ dnstm tunnel share -t slip-socks --no-cert
 | `--no-cert`   | Skip embedding TLS certificate (Slipstream)       |
 
 The generated URL encodes transport config (domain, cert/pubkey), backend config (type, credentials), and can be imported directly with `dnstc tunnel import`.
+
+**Note:** For MasterDnsVPN tunnels, `tunnel share` outputs the domain and encryption key as plain text instead of a `dnst://` URL. Copy these into the client config manually.
+
+### Tunnel Convert Flags
+
+Convert an existing tunnel to a different transport in-place, preserving the tag and domain.
+
+```bash
+# Convert a single tunnel to MasterDnsVPN
+dnstm tunnel convert vpn1 --to masterdnsvpn
+
+# Pin a specific MasterDnsVPN release for the converted tunnel
+dnstm tunnel convert vpn1 --to masterdnsvpn --masterdnsvpn-version v2026.04.07.233605-b5a4474
+
+# Bulk convert all tunnels of one transport type to another
+dnstm tunnel convert-all --from vaydns --to masterdnsvpn
+dnstm tunnel convert-all --from dnstt --to masterdnsvpn
+```
+
+| Flag                       | Description                                                           |
+| -------------------------- | --------------------------------------------------------------------- |
+| `--to`                     | Target transport type                                                 |
+| `--masterdnsvpn-version`   | MasterDnsVPN release tag to pin (empty = latest)                      |
+| `--from`                   | Source transport type (convert-all only)                              |
+
+### Tunnel Set-Encryption Flags
+
+Change the encryption method and rotate the encryption key for a MasterDnsVPN tunnel.
+
+```bash
+# Change encryption on one tunnel (interactive prompt)
+dnstm tunnel set-encryption vpn1
+
+# Change encryption on all MasterDnsVPN tunnels
+dnstm tunnel set-encryption-all
+```
+
+Available encryption methods:
+
+| Value | Method       |
+| ----- | ------------ |
+| 0     | None         |
+| 1     | XOR          |
+| 2     | ChaCha20     |
+| 3–5   | AES variants |
+
+The command prints the newly generated encryption key after rotation. Distribute the new key to all clients.
 
 ## Backend Commands
 

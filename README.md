@@ -4,11 +4,12 @@ A CLI tool to deploy and manage DNS tunnel servers on Linux. Run single tunnels 
 
 ## Supported Transports
 
-| Transport      | Description                                      |
-| -------------- | ------------------------------------------------ |
-| **VayDNS**     | Next-gen DNS tunnel with Curve25519 keys and KCP |
-| **DNSTT**      | Classic DNS tunnel using Curve25519 keys         |
-| **Slipstream** | High-performance DNS tunnel with TLS encryption  |
+| Transport          | Description                                                       |
+| ------------------ | ----------------------------------------------------------------- |
+| **VayDNS**         | Next-gen DNS tunnel with Curve25519 keys and KCP                  |
+| **DNSTT**          | Classic DNS tunnel using Curve25519 keys                          |
+| **Slipstream**     | High-performance DNS tunnel with TLS encryption                   |
+| **MasterDnsVPN**   | Self-contained VPN provider with built-in SOCKS5 and encryption   |
 
 ## Supported Backends
 
@@ -18,6 +19,8 @@ A CLI tool to deploy and manage DNS tunnel servers on Linux. Run single tunnels 
 | **SSH**         | Forward to local SSH server       | Slipstream, DNSTT, VayDNS |
 | **Shadowsocks** | Encrypted proxy via SIP003 plugin | Slipstream only           |
 | **Custom**      | Forward to any TCP address        | Slipstream, DNSTT, VayDNS |
+
+> **Note:** MasterDnsVPN does not use a backend. It operates as a self-contained SOCKS5 VPN provider with its own built-in encryption, key management, and upstream DNS resolution.
 
 ## Features
 
@@ -29,6 +32,7 @@ A CLI tool to deploy and manage DNS tunnel servers on Linux. Run single tunnels 
 - systemd service management with security hardening
 - SSH tunnel user management with sshd hardening
 - Integrated microsocks SOCKS5 proxy with optional authentication
+- MasterDnsVPN: self-contained VPN provider with configurable encryption (XOR, ChaCha20, AES), per-tunnel binary versioning, and live encryption key rotation
 
 ## System Overview
 
@@ -135,6 +139,24 @@ sudo dnstm tunnel add -t vaydns-compat --transport vaydns --backend socks --doma
 # Add slipstream + custom backend (e.g., MTProto proxy)
 sudo dnstm backend add -t mtproto --type custom --address 127.0.0.1:8443
 sudo dnstm tunnel add -t slip-mtproto --transport slipstream --backend mtproto --domain t6.example.com
+
+# Add MasterDnsVPN tunnel (no backend required)
+sudo dnstm tunnel add -t vpn1 --transport masterdnsvpn --domain t7.example.com
+
+# Change encryption method for a MasterDnsVPN tunnel
+sudo dnstm tunnel set-encryption vpn1
+
+# Change encryption on all MasterDnsVPN tunnels at once
+sudo dnstm tunnel set-encryption-all
+
+# Convert an existing tunnel to MasterDnsVPN
+sudo dnstm tunnel convert vpn1 --to masterdnsvpn
+
+# Convert all tunnels of a given transport to MasterDnsVPN
+sudo dnstm tunnel convert-all --from vaydns --to masterdnsvpn
+
+# Pin a specific MasterDnsVPN release version during install
+sudo dnstm install --masterdnsvpn-version v2026.04.07.233605-b5a4474
 ```
 
 #### 3. Config File
@@ -231,6 +253,16 @@ Example `config.json` (certs/keys auto-generated when paths are omitted):
       "backend": "mtproto",
       "domain": "t6.example.com",
       "port": 5315
+    },
+    {
+      "tag": "vpn1",
+      "transport": "masterdnsvpn",
+      "domain": "t7.example.com",
+      "port": 5316,
+      "masterdnsvpn": {
+        "config_file": "/etc/dnstm/tunnels/vpn1/server_config.toml",
+        "binary_path": "/etc/dnstm/tunnels/vpn1/masterdnsvpn-server"
+      }
     }
   ],
   "route": {
@@ -265,6 +297,69 @@ sudo dnstm uninstall              # Remove all components
 ```
 
 See [CLI Reference](docs/CLI.md) for all available flags and options.
+
+## MasterDnsVPN
+
+MasterDnsVPN is a self-contained VPN provider transport. Unlike other transports it does not require a DNSTM backend — it runs its own SOCKS5 proxy, handles encryption, and resolves upstream DNS internally.
+
+### How it differs from other transports
+
+| Feature              | MasterDnsVPN          | Slipstream / DNSTT / VayDNS |
+| -------------------- | --------------------- | --------------------------- |
+| Backend required     | No                    | Yes                         |
+| Encryption           | Built-in (0–5 methods)| Depends on backend          |
+| Key management       | Auto-generated, rotatable | Curve25519 / TLS cert   |
+| Client config format | Domain + Encryption Key | `dnst://` URL             |
+| Per-tunnel binary    | Yes (version-pinnable)| No                          |
+| Upstream DNS         | Configurable (default: Cloudflare + Quad One) | Via backend |
+
+### Encryption methods
+
+| Value | Method   |
+| ----- | -------- |
+| 0     | None     |
+| 1     | XOR      |
+| 2     | ChaCha20 |
+| 3–5   | AES variants |
+
+Change the encryption method (and rotate the key) at any time:
+
+```bash
+sudo dnstm tunnel set-encryption vpn1
+# Follow the prompt to select a method; the new key is printed for client use
+```
+
+### Files created per tunnel
+
+```
+/etc/dnstm/tunnels/{tag}/
+├── server_config.toml       # TOML config (updated automatically on mode switches)
+├── encrypt_key.txt          # Encryption key (regenerated on key rotation)
+└── masterdnsvpn-server      # Per-tunnel binary copy
+
+/etc/dnstm/.masterdnsvpn-version  # Installed release tag (shared)
+```
+
+### Sharing with a client
+
+`tunnel share` outputs the domain and encryption key instead of a `dnst://` URL:
+
+```bash
+sudo dnstm tunnel share -t vpn1
+# Output: domain and encryption key to paste into the client config
+```
+
+### Version management
+
+During install or upgrade you can pin a specific MasterDnsVPN release. The version is stored in `/etc/dnstm/.masterdnsvpn-version` and each tunnel keeps its own binary copy, so tunnels are unaffected by global upgrades until you explicitly re-setup or convert them.
+
+```bash
+# Install with a specific version
+sudo dnstm install --masterdnsvpn-version v2026.04.07.233605-b5a4474
+
+# Skip MasterDnsVPN installation entirely
+sudo dnstm install --masterdnsvpn-version skip
+```
 
 ## Operating Modes
 
